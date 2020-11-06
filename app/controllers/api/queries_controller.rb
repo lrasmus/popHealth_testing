@@ -149,84 +149,83 @@ module Api
       @msrs = []
       @measures = {}
       sub_ids ={}
-     if params[:providers]
-      options[:filters] = build_filter
-      authorize_providers
-      end_date = params[:effective_date]
-      start_date = params[:effective_start_date]
-      end_date = Time.at(end_date.to_i) if end_date.is_a?(String)
-      start_date = Time.at(start_date.to_i) if start_date.is_a?(String)
-      start_date = end_date.years_ago(1) if start_date.nil?
+      if params[:providers]
+        options[:filters] = build_filter
+        authorize_providers
+        end_date = params[:effective_date]
+        start_date = params[:effective_start_date]
+        end_date = Time.at(end_date.to_i) if end_date.is_a?(String)
+        start_date = Time.at(start_date.to_i) if start_date.is_a?(String)
+        start_date = end_date.years_ago(1) if start_date.nil?
 
-      @msr = Measure.where(_id: params[:measure_id]).first
-      if @msr.present?
-       @mids << @msr._id
-       @msrs << @msr
-      else
-       @msr = Measure.where(hqmf_id: params[:measure_id]).first
+        @msr = Measure.where(_id: params[:measure_id]).first
         if @msr.present?
           @mids << @msr._id
           @msrs << @msr
-        end
-      end
-
-      rp = ReportingPeriod.where(start_date: start_date, end_date: end_date).first_or_create
-      rp.save!
-
-      options[:start_date] = start_date
-      options[:effective_date] = end_date
-      options[:test_id] = rp._id
-      options['requestDocument'] = true
-      begin
-        puts "Measure ID id #{params[:measure_id]}"
-        qc = CQM::QualityReport.where('measure_id' => params[:measure_id], 'effective_date' => options[:effective_date],'start_date' => options[:start_date], "filters.providers" => {'$in': params[:providers]}).first
-
-        if qc.nil?
-         measure = Measure.where(hqmf_id: params[:measure_id]).first
-          #if measure
-           #puts "measure is availabe? #{measure.id}"
-          #end
-         qc = CQM::QualityReport.where('measure_id' => measure.id, 'effective_date' => options[:effective_date],'start_date' => options[:start_date], "sub_id" => params[:sub_id],"filters.providers" => {'$in': params[:providers]}).first if measure.present?
-
-        end
-        if qc
-          puts "calculation is already available in cache"
-          render json: qc
         else
-          #CQM::QualityReport.where('measure_id' => params[:measure_id]).destroy_all
-          #CQM::IndividualResult.where('measure_id' => params[:measure_id]).destroy_all
-          providers = params[:providers]
+          @msr = Measure.where(hqmf_id: params[:measure_id]).first
+          if @msr.present?
+            @mids << @msr._id
+            @msrs << @msr
+          end
+        end
 
-          CQM::Patient.all.each do |p|
-            if p.providers.first._id.to_s == providers.first
+        rp = ReportingPeriod.where(start_date: start_date, end_date: end_date).first_or_create
+        rp.save!
+
+        options[:start_date] = start_date
+        options[:effective_date] = end_date
+        options[:test_id] = rp._id
+        options['requestDocument'] = true
+        begin
+          puts "Measure ID id #{params[:measure_id]}"
+          qc = CQM::QualityReport.where('measure_id' => params[:measure_id], 'effective_date' => options[:effective_date],'start_date' => options[:start_date], "filters.providers" => {'$in': params[:providers]}).first
+
+          if qc.nil?
+            measure = Measure.where(hqmf_id: params[:measure_id]).first
+            #if measure
+            #puts "measure is availabe? #{measure.id}"
+            #end
+            qc = CQM::QualityReport.where('measure_id' => measure.id, 'effective_date' => options[:effective_date],'start_date' => options[:start_date], "sub_id" => params[:sub_id],"filters.providers" => {'$in': params[:providers]}).first if measure.present?
+          end
+          if qc
+            puts "calculation is already available in cache"
+            render json: qc
+          else
+            #CQM::QualityReport.where('measure_id' => params[:measure_id]).destroy_all
+            #CQM::IndividualResult.where('measure_id' => params[:measure_id]).destroy_all
+            providers = params[:providers]
+
+            CQM::Patient.all.each do |p|
+              if p.providers.first._id.to_s == providers.first
                 @pids << p._id.to_s
                 @patients << p
+              end
             end
-          end
 
-          begin
-            qdm_patients = @patients.map(&:qdmPatient)
-            measure = Measure.where(hqmf_id: params[:measure_id]).first
-            individual_results = CQM::IndividualResult.where('measure_id' => measure._id).first
-            options[:effectiveDateEnd] = Time.at(options[:effective_date]).strftime("%Y%m%d%H%M%S")
-            options[:effectiveDate] = Time.at(options[:start_date]).strftime("%Y%m%d%H%M%S")
-          if !individual_results
-            calc_job = Cypress::CqmExecutionCalc.new(qdm_patients,
-                                             @msrs,
-                                             options[:test_id],
-                                             options)
-            result = calc_job.execute
-          end
-          rescue Exception => e
-            puts "Error in calculation"
-            puts e.message
-            puts e.backtrace.inspect
-          end
+            begin
+              qdm_patients = @patients.map(&:qdmPatient)
+              measure = Measure.where(hqmf_id: params[:measure_id]).first
+              individual_results = CQM::IndividualResult.where('measure_id' => measure._id).first
+              options[:effectiveDateEnd] = Time.at(options[:effective_date]).strftime("%Y%m%d%H%M%S")
+              options[:effectiveDate] = Time.at(options[:start_date]).strftime("%Y%m%d%H%M%S")
+              if !individual_results
+                calc_job = Cypress::CqmExecutionCalc.new(qdm_patients,
+                                               @msrs,
+                                               options[:test_id],
+                                               options)
+                result = calc_job.execute
+              end
+            rescue Exception => e
+              puts "Error in calculation"
+              puts e.message
+              puts e.backtrace.inspect
+            end
             erc = Cypress::ExpectedResultsCalculator.new(@patients,options[:test_id],options[:effective_date],options[:start_date],params[:sub_id], options[:filters], true)
             @results = erc.aggregate_results_for_measures(@msrs)
             log_api_call LogAction::ADD, "Create a clinical quality calculation"
             render json: @results
-        end
+          end
         rescue Exception => e
           puts e.message
           puts e.backtrace.inspect
